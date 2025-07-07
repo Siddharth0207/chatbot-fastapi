@@ -1,0 +1,11 @@
+langchain==0.3.25
+langchain-community==0.3.23
+langchain-core==0.3.59
+langchain-nvidia-ai-endpoints==0.3.10
+langchain-text-splitters==0.3.8
+fastapi
+uvicorn[standard]
+pydantic
+numpy
+pandas
+python-dotenv

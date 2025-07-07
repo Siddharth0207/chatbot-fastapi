@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diamond Chatbot</title>
+    <style>
+        body {
+            background: #b2bac9;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        .chat-container {
+            max-width: 480px;
+            margin: 40px auto;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 2px 16px rgba(0, 0, 0, 0.07);
+            display: flex;
+            flex-direction: column;
+            height: 70vh;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            padding: 1.2rem 1.5rem;
+            background: #22223b;
+            color: #fff;
+            font-size: 1.2rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 1.2rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 0.8rem 1.1rem;
+            border-radius: 1.2rem;
+            font-size: 1rem;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+
+        .user {
+            align-self: flex-end;
+            background: #4f8cff;
+            color: #fff;
+        }
+
+        .bot {
+            align-self: flex-start;
+            background: #e9ecef;
+            color: #22223b;
+        }
+
+        .chat-input {
+            display: flex;
+            border-top: 1px solid #eee;
+            background: #fafbfc;
+            padding: 0.7rem 1rem;
+        }
+
+        .chat-input input {
+            flex: 1;
+            border: none;
+            outline: none;
+            font-size: 1rem;
+            background: transparent;
+            padding: 0.6rem 0.8rem;
+        }
+
+        .chat-input button {
+            background: #22223b;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 0.6rem 1.2rem;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .chat-input button:hover {
+            background: #4f8cff;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="chat-container">
+        <div class="chat-header">💎 Diamond Chatbot</div>
+        <div class="chat-messages" id="chat-messages">
+            <div class="message bot">Hi! Ask me anything about diamonds. For example: <br><i>"Suggest me a 2 carat
+                    diamond with VVS1 clarity from India."</i></div>
+        </div>
+        <form class="chat-input" id="chat-form">
+            <input type="text" id="user-input" placeholder="Type your diamond query..." autocomplete="off" required />
+            <button type="submit">Send</button>
+        </form>
+    </div>
+    <script>
+        const chatMessages = document.getElementById('chat-messages');
+        const chatForm = document.getElementById('chat-form');
+        const userInput = document.getElementById('user-input');
+
+        function appendMessage(text, sender, typingEffect = false) {
+            const msg = document.createElement('div');
+            msg.className = `message ${sender}`;
+            if (!typingEffect) {
+                msg.innerHTML = text;
+                chatMessages.appendChild(msg);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            } else {
+                msg.innerHTML = '';
+                chatMessages.appendChild(msg);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                let i = 0;
+                function typeChar() {
+                    if (i < text.length) {
+                        // Support HTML tags: type by token if tag, else by char
+                        if (text[i] === '<') {
+                            // Find the end of the tag
+                            const tagEnd = text.indexOf('>', i);
+                            if (tagEnd !== -1) {
+                                msg.innerHTML += text.slice(i, tagEnd + 1);
+                                i = tagEnd + 1;
+                            } else {
+                                msg.innerHTML += text[i++];
+                            }
+                        } else {
+                            msg.innerHTML += text[i++];
+                        }
+                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                        setTimeout(typeChar, 12); // Typing speed (ms)
+                    }
+                }
+                typeChar();
+            }
+        }
+
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const query = userInput.value.trim();
+            if (!query) return;
+            appendMessage(query, 'user');
+            userInput.value = '';
+            appendMessage('...', 'bot');
+            try {
+                const response = await fetch('http://localhost:8000/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query })
+                });
+                const data = await response.json();
+                console.log('Backend response:', data);
+                chatMessages.removeChild(chatMessages.lastChild);
+
+                if (data.summary && data.summary.trim()) {
+                    // Typing effect for LLM summary
+                    appendMessage(data.summary, 'bot', true);
+                } else if (Array.isArray(data.diamonds) && data.diamonds.length > 0) {
+                    let summary = '<b>Here are some diamonds I found:</b><ul style="margin:0 0 0 1em;">';
+                    data.diamonds.forEach(diamond => {
+                        summary += '<li>' + Object.entries(diamond).map(([k, v]) => `<b>${k}:</b> ${v}`).join(', ') + '</li>';
+                    });
+                    summary += '</ul>';
+                    appendMessage(summary, 'bot', true);
+                } else {
+                    appendMessage('Sorry, I could not find any diamonds matching your query.', 'bot', true);
+                }
+            } catch (err) {
+                chatMessages.removeChild(chatMessages.lastChild);
+                appendMessage('There was an error processing your request.', 'bot', true);
+            }
+        });
+    </script>
+</body>
+
+</html>
