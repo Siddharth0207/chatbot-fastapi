@@ -44,7 +44,9 @@ Methods:
         """
 from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
 from langchain.prompts import ChatPromptTemplate, PromptTemplate
-from langchain_core.messages import HumanMessage
+from langchain.memory import ConversationBufferMemory
+from langchain.chains import LLMChain
+from langchain_core.messages import HumanMessage, AIMessage
 from pydantic import BaseModel, Field
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from typing import Optional, List, Dict, Any
@@ -52,6 +54,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 import asyncio
+import json
 
 
 class DiamondQuery(BaseModel):
@@ -94,7 +97,7 @@ class DiamondFinder:
         prompt: LangChain ChatPromptTemplate for LLM extraction prompt.
         llm: LangChain NVIDIA LLM client for both extraction and summary tasks.
     """
-    def __init__(self, db_url: str):
+    def __init__(self, db_url: str, memory: Optional[ConversationBufferMemory] = None):
         """
         Initialize DiamondFinder with async database engine and LLM setup.
 
@@ -104,6 +107,9 @@ class DiamondFinder:
         # Use async engine for PostgreSQL
         self.engine = create_async_engine(db_url, future=True)
         self.async_session = sessionmaker(self.engine, expire_on_commit=False, class_=AsyncSession)
+        self.memory = ConversationBufferMemory(memory_key="chat_history", 
+                                               input_key="input", 
+                                               return_messages=True)
         self.parser = PydanticOutputParser(pydantic_object=DiamondQuery)
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", "You are an assistant that extracts diamond preferences into structured fields."),
@@ -116,6 +122,13 @@ class DiamondFinder:
             top_p=0.7,
             max_tokens=4096,
         )
+        # Chain with memory
+        self.chain = LLMChain(
+            llm=self.llm,
+            prompt=self.prompt,
+            output_parser=self.parser,
+            verbose=True  # Optional: for debugging
+        )
 
     def extract_diamond_entities(self, user_input: str) -> dict:
         """
@@ -127,13 +140,17 @@ class DiamondFinder:
         Returns:
             dict: Dictionary of extracted diamond search fields as defined by DiamondQuery.
         """
-        formatted_prompt = self.prompt.format_messages(
-            input=user_input,
-            format_instructions=self.parser.get_format_instructions()
-        )
-        response = self.llm.invoke(formatted_prompt)
-        sql_query = self.parser.parse(response.content)
-        return sql_query.dict()
+        sql_query = self.chain.run(input=user_input, format_instructions=self.parser.get_format_instructions())
+        if isinstance(sql_query, dict):
+            return sql_query
+        elif hasattr(sql_query, "dict"):
+            return sql_query.dict()
+        else:
+            # If it's a string, try to parse it as JSON
+            try:
+                return json.loads(sql_query)
+            except Exception:
+                raise ValueError("LLM output is not a valid dict or JSON string")
 
     def normalize_diamond_fields(self, data: dict) -> dict:
         """
@@ -381,65 +398,80 @@ class DiamondFinder:
             column_names = result.keys()
             return [dict(zip(column_names, row)) for row in rows]
 
-    async def find_diamonds(self, user_query: str) -> Dict[str, Any]:
+    async def find_diamonds(self, user_query: str, chat_history: list = None, session_id: str = None) -> Dict[str, Any]:
         """
         Orchestrate the extraction, normalization, SQL building, and DB querying for diamonds (async).
-        Also generates an LLM-based summary of the results.
-
+        Uses memory only for the summary/chat step.
         Args:
             user_query (str): The user's natural language query describing diamond preferences.
-
+            chat_history (list): List of previous messages (optional, for multi-turn chat).
         Returns:
             Dict[str, Any]: Dictionary containing:
                 - 'diamonds': List of matching diamond records (as dicts)
                 - 'summary': LLM-generated summary of the results (str)
                 - 'sql_query': The SQL query string used (str)
+                - 'chat_history': Updated chat history (list)
+                - 'session_id': The session ID (str)
         """
-        loop = asyncio.get_event_loop()
-        # Run sync LLM extraction in executor
-        structured_data = await loop.run_in_executor(None, self.extract_diamond_entities, user_query)
+        # Extraction (stateless)
+        structured_data = self.extract_diamond_entities(user_query)
         normalized_data = self.normalize_diamond_fields(structured_data)
         sql = self.build_sql_query_from_json(normalized_data)
         diamonds = await self.query_diamonds(sql)
+
+        # Prepare summary prompt
         prompt_2 = PromptTemplate(
             input_variables=["diamonds", "user_query"],
             template="""
+
         You are an expert gemologist and diamond consultant.
 
-        The user asked: "{user_query}"
+            The user asked: "{user_query}"
 
-        You have retrieved the following diamonds from the database:
-        {diamonds}
+            You have retrieved the following diamonds from the database:
+            {diamonds}
 
-        Your task is to:
-        1. Summarize the diamonds in a human-friendly way.
-        2. Highlight only the properties the user cared about in their query.
-        3. Explain why each diamond was selected (e.g., matching carat, cut, or other user preferences).
-        4. Make the summary informative yet concise, suitable for a sales pitch or recommendation.
-        5. Present the results as an HTML table, where each row is a diamond and each column is a property the user asked for. The first row should be the property names as table headers. Do not include properties the user did not ask for.
-        6. The summary should appear above the table, and there should be no bullet points or paragraphs for the diamonds themselves.
-        7. If you want to emphasize or bold any text (such as key properties, table headers, or important values), you MUST use <b>...</b> or <strong>...</strong> HTML tags, not markdown (**...**) or any other method. This applies to both the summary and the table.
+            Your task is to:
+            1. Summarize the diamonds in a human-friendly way.
+            2. Highlight only the properties the user cared about in their query.
+            3. Explain why each diamond was selected (e.g., matching carat, cut, or other user preferences).
+            4. Make the summary informative yet concise, suitable for a sales pitch or recommendation.
 
-        Example output:
-        <p>Here are the <b>best diamonds</b> matching your preferences:</p>
-        <table>
-          <tr><th><b>Carat</b></th><th><b>Cut</b></th><th><b>Price</b></th></tr>
-          <tr><td>1.0</td><td><b>EX</b></td><td>$5000</td></tr>
-          <tr><td>1.2</td><td>VG</td><td><b>$4800</b></td></tr>
-        </table>
-
-        Only include attributes that are relevant to the user's query. Return the summary as a short paragraph, followed by an HTML table of the diamonds and their requested properties.
+            Only include attributes that are relevant to the user's query. Return the summary in bullet points or a short paragraph per diamond.
         """
         )
         summary_prompt = prompt_2.format(
-            diamonds=diamonds,
+            diamonds=json.dumps(diamonds, indent=2),
             user_query=user_query
         )
-        # Run sync LLM summary in executor
-        response = await loop.run_in_executor(None, self.llm.invoke, [HumanMessage(content=summary_prompt)])
+
+        # Build chat history for memory (if any)
+        messages = []
+        if chat_history:
+            for msg in chat_history:
+                if msg['role'] == 'user':
+                    messages.append(HumanMessage(content=msg['content']))
+                elif msg['role'] == 'assistant':
+                    messages.append(AIMessage(content=msg['content']))
+        messages.append(HumanMessage(content=summary_prompt))
+
+        # Run summary LLM with memory (multi-turn)
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, self.llm.invoke, messages)
+        messages.append(AIMessage(content=response.content))
+
+        # Convert messages back to serializable chat history
+        updated_history = []
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                updated_history.append({'role': 'user', 'content': msg.content})
+            elif isinstance(msg, AIMessage):
+                updated_history.append({'role': 'assistant', 'content': msg.content})
+
         return {
             "diamonds": diamonds,
             "summary": response.content,
-            "sql_query": sql
-
+            "sql_query": sql,
+            "chat_history": updated_history,
+            "session_id": session_id
         }

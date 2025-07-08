@@ -1,3 +1,22 @@
+
+
+"""
+This module defines a FastAPI application for querying diamond data using a natural language interface.
+It integrates LangChain for conversational memory and NVIDIA AI endpoints for processing queries.
+Classes:
+    DiamondQueryRequest (BaseModel): 
+        A Pydantic model representing the structure of the request body for diamond queries.
+Functions:
+    get_memory(session_id: str) -> ConversationBufferMemory:
+        Creates and returns a conversation buffer memory object for maintaining chat history.
+    read_root() -> dict:
+        A FastAPI route that returns a welcome message for the API.
+    query_diamond(request: DiamondQueryRequest, fastapi_request: Request) -> JSONResponse:
+        A FastAPI route that processes diamond queries using the DiamondFinder class and returns the results.
+FastAPI Application:
+    app: 
+        The main FastAPI application instance with CORS middleware configured for cross-origin requests.
+"""
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel , Field
 import pandas as pd
@@ -5,10 +24,12 @@ import ast
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from langchain.agents import AgentExecutor, Tool, create_react_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.memory import ConversationBufferMemory
 from langchain_core.output_parsers import StrOutputParser
 from typing import Optional, List, Dict, Any
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi import Request
 
 
 
@@ -19,8 +40,9 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from langchain_community.utilities import SQLDatabase
 
-finder = DiamondFinder("postgresql+asyncpg://postgres:0207@localhost:5432/postgres")
 
+def get_memory(session_id: str)-> ConversationBufferMemory:
+    return ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 
 class DiamondQueryRequest(BaseModel):
@@ -39,9 +61,14 @@ app.add_middleware(
 
 @app.get("/")
 async def read_root():
-    return await {"message": "Welcome to the Diamond Query API"}
+    return {"message": "Welcome to the Diamond Query API"}
 
 @app.post("/query")
-async def query_diamond(request: DiamondQueryRequest):
+async def query_diamond(request: DiamondQueryRequest, fastapi_request: Request):
+    session_id = fastapi_request.headers.get("x-session-id", "default_session")
+    memory = get_memory(session_id)
+
+    finder = DiamondFinder("postgresql+asyncpg://postgres:0207@localhost:5432/postgres", memory=memory)
+
     result = await finder.find_diamonds(request.query)
-    return JSONResponse(content=result)
+    return JSONResponse(content=result, headers={"x-session-id": session_id})
