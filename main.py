@@ -49,7 +49,7 @@ from langchain.chains import LLMChain
 from langchain_core.messages import HumanMessage, AIMessage
 from pydantic import BaseModel, Field
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession 
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
@@ -382,21 +382,42 @@ class DiamondFinder:
             return "SELECT * FROM diamonds LIMIT 10;"
         return base_query + " AND ".join(conditions) + " LIMIT 10;"
 
-    async def query_diamonds(self, sql: str) -> List[Dict[str, Any]]:
+    async def query_diamonds(self, sql: str) -> Tuple[List[Dict[str, Any]], int]:
         """
-        Execute a SQL query asynchronously and return the result as a list of dictionaries.
+        Execute a SQL query asynchronously and return the result as a list of dictionaries, along with the total count of rows matched (ignoring LIMIT).
 
         Args:
-            sql (str): SQL query string to execute.
+            sql (str): SQL query string to execute (with LIMIT).
 
         Returns:
-            List[Dict[str, Any]]: List of dictionaries, each representing a diamond record from the database.
+            Tuple[List[Dict[str, Any]], int]:
+                - List of dictionaries, each representing a diamond record from the database.
+                - Total number of rows matched by the query (ignoring LIMIT).
         """
+        # Extract WHERE clause for count query
+        sql_lower = sql.lower()
+        where_idx = sql_lower.find(" where ")
+        limit_idx = sql_lower.find(" limit ")
+        if where_idx != -1:
+            if limit_idx != -1:
+                where_clause = sql[where_idx:limit_idx]
+            else:
+                where_clause = sql[where_idx:]
+            count_sql = f"SELECT COUNT(*) FROM diamonds{where_clause};"
+        else:
+            count_sql = "SELECT COUNT(*) FROM diamonds;"
         async with self.async_session() as session:
+            # Get limited results
             result = await session.execute(text(sql))
             rows = result.fetchall()
             column_names = result.keys()
-            return [dict(zip(column_names, row)) for row in rows]
+            diamonds = [dict(zip(column_names, row)) for row in rows]
+            # Get total count
+            count_result = await session.execute(text(count_sql))
+            total_count = count_result.scalar() or 0
+            return diamonds, total_count
+    
+    
 
     async def find_diamonds(self, user_query: str, chat_history: list = None, session_id: str = None) -> Dict[str, Any]:
         """
@@ -412,37 +433,57 @@ class DiamondFinder:
                 - 'sql_query': The SQL query string used (str)
                 - 'chat_history': Updated chat history (list)
                 - 'session_id': The session ID (str)
+                - 'total_count': Total number of rows matched by the query (int)
         """
+        def format_diamond_list(diamonds: List[Dict[str, Any]]) -> str:
+            return "\n".join(
+                f"{i+1}. Shape: {d['shape']}, Color: {d['color']}, Cut: {d['cut']}, "
+                f"Clarity: {d['clarity']}, Polish: {d['polish']}, "
+                f"Weight: {d['carat']}, Price/Carat: ${d['price_per_carat']}"
+                for i, d in enumerate(diamonds[:10])
+            )
         # Extraction (stateless)
         structured_data = self.extract_diamond_entities(user_query)
         normalized_data = self.normalize_diamond_fields(structured_data)
         sql = self.build_sql_query_from_json(normalized_data)
-        diamonds = await self.query_diamonds(sql)
+        diamonds, total_count = await self.query_diamonds(sql)
+        
+
 
         # Prepare summary prompt
         prompt_2 = PromptTemplate(
-            input_variables=["diamonds", "user_query"],
+            input_variables=["diamonds", "user_query", "total_count"],
             template="""
-
-        You are an expert gemologist and diamond consultant.
+            You are an expert gemologist and diamond consultant.
 
             The user asked: "{user_query}"
 
             You have retrieved the following diamonds from the database:
+
             {diamonds}
 
-            Your task is to:
-            1. Summarize the diamonds in a human-friendly way.
-            2. Highlight only the properties the user cared about in their query.
-            3. Explain why each diamond was selected (e.g., matching carat, cut, or other user preferences).
-            4. Make the summary informative yet concise, suitable for a sales pitch or recommendation.
+            Now do the following:
 
-            Only include attributes that are relevant to the user's query. Return the summary in bullet points or a short paragraph per diamond.
-        """
+            1. Begin with this line exactly:
+            We found total {total_count} stones based on your query.
+
+            2. Then say:
+            Here we are displaying top 10 stones:
+
+            3. Print each diamond on a **new line**, following this format:
+            . Shape: <Shape>, Color: <Color>, Cut: <Cut>, Clarity: <Clarity>, Polish: <Polish>, Weight: <Carat>, Price/Carat: <$Price>
+
+            4. Ensure that each diamond is printed on a separate line with a line break (`\n`).
+
+            5. After listing the diamonds, provide a **single-paragraph summary** of what makes this selection valuable and how it fits the user’s preferences.
+
+            Make sure the response preserves the line breaks exactly as instructed, so it renders properly in a web frontend.
+            """
         )
         summary_prompt = prompt_2.format(
-            diamonds=json.dumps(diamonds, indent=2),
-            user_query=user_query
+            diamonds=format_diamond_list(diamonds),
+            user_query=user_query,
+            total_count=total_count
         )
 
         # Build chat history for memory (if any)
@@ -472,6 +513,5 @@ class DiamondFinder:
             "diamonds": diamonds,
             "summary": response.content,
             "sql_query": sql,
-            "chat_history": updated_history,
-            "session_id": session_id
+            "total_count": total_count
         }
