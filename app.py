@@ -1,5 +1,3 @@
-
-
 """
 This module defines a FastAPI application for querying diamond data using a natural language interface.
 It integrates LangChain for conversational memory and NVIDIA AI endpoints for processing queries.
@@ -39,6 +37,7 @@ from main import DiamondFinder
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from langchain_community.utilities import SQLDatabase
+from logger import logger
 
 
 def get_memory(session_id: str)-> ConversationBufferMemory:
@@ -61,14 +60,19 @@ app.add_middleware(
 
 @app.get("/")
 async def read_root():
+    logger.info("Root endpoint accessed.")
     return {"message": "Welcome to the Diamond Query API"}
 
 @app.post("/query")
 async def query_diamond(request: DiamondQueryRequest, fastapi_request: Request):
     session_id = fastapi_request.headers.get("x-session-id", "default_session")
+    logger.info(f"/query endpoint called. Session: {session_id}, Query: {request.query}")
     memory = get_memory(session_id)
-
     finder = DiamondFinder("postgresql+asyncpg://postgres:0207@localhost:5432/postgres", memory=memory)
-
-    result = await finder.find_diamonds(request.query)
-    return JSONResponse(content=result, headers={"x-session-id": session_id})
+    try:
+        result = await finder.find_diamonds(request.query)
+        logger.info(f"Query successful for session {session_id}")
+        return JSONResponse(content=result, headers={"x-session-id": session_id})
+    except Exception as e:
+        logger.error(f"Error in /query endpoint for session {session_id}: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
