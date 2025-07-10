@@ -73,7 +73,9 @@ class DiamondQuery(BaseModel):
         cut (Optional[str]): Cut grade (e.g., Excellent, Very Good, Good, etc.).
         polish (Optional[str]): Polish rating (e.g., Excellent, Very Good, etc.).
     """
+
     carat: Optional[float] = Field(description="Carat weight of the diamond")
+    shape: Optional[str] = Field(default=None,description="Shape of the diamond like Round, Oval, etc.")
     clarity: Optional[str] = Field(default=None,description="Clarity grade like VVS, VS, SI, etc.")
     lab: Optional[str] = Field(default=None,description="Country of lab or lab like India, USA, etc.")
     symmetry: Optional[str] = Field(default=None,description="Symmetry rating, e.g., Excellent, Very Good, etc.")
@@ -83,6 +85,7 @@ class DiamondQuery(BaseModel):
     culet: Optional[str] = Field(default=None,description="Culet size, e.g., None, Small, Medium, Large")
     cut: Optional[str] = Field(default=None,description="Cut grade like Excellent, Very Good, Good, etc.")
     polish: Optional[str] = Field(default=None,description="Polish rating, e.g., Excellent, Very Good, etc.")
+    color: Optional[str] = Field(default=None,description="Color grade like D, E, F, etc.")
 
 class DiamondFinder:
     """
@@ -329,7 +332,7 @@ class DiamondFinder:
                 # Baguette
                 "Baguette": "Baguette", "BAG": "Baguette", "BG": "Baguette", "BAGUETTE": "Baguette", "Bag": "Baguette", "TAPERED BAGUETTE": "Baguette", "BAGETTE": "Baguette",
                 # Taper
-                "Taper": "Taper", "TAPER": "Taper",
+                "Taper": "Taper", "TAPER": "Taper", "taper": "Taper",
                 # Rose
                 "rose": "Rose", "RS": "Rose", "RRC": "Rose", "Rose": "Rose", "ROSE": "Rose", "ROSE-CUT": "Rose",
                 # Shield
@@ -360,6 +363,10 @@ class DiamondFinder:
         conditions = []
         if data.get("carat"):
             conditions.append(f"carat = {data['carat']}")
+        if data.get("shape"):
+            conditions.append(f"shape ILIKE '%{data['shape']}%'")
+        if data.get("color"):
+            conditions.append(f"color ILIKE '%{data['color']}%'")
         if data.get("lab"):
             conditions.append(f"lab ILIKE '%{data['lab']}%'")
         if data.get("clarity"):
@@ -475,7 +482,7 @@ class DiamondFinder:
 
             4. Ensure that each diamond is printed on a separate line with a line break (`\n`).
 
-            5. After listing the diamonds, provide a **single-paragraph summary** of what makes this selection valuable and how it fits the user’s preferences.
+            5. After listing the diamonds, provide a **2-3 sentence summary** of what makes this selection valuable and how it fits the user’s preferences.
 
             Make sure the response preserves the line breaks exactly as instructed, so it renders properly in a web frontend.
             """
