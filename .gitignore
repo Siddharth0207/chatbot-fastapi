@@ -2,6 +2,9 @@
 __pycache__/
 *.py[codz]
 *$py.class
+# Byte-compiled / optimized / DLL files
+__pycache__
+.vscode/
 
 # C extensions
 *.so

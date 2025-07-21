@@ -73,8 +73,8 @@ class DiamondQuery(BaseModel):
         cut (Optional[str]): Cut grade (e.g., Excellent, Very Good, Good, etc.).
         polish (Optional[str]): Polish rating (e.g., Excellent, Very Good, etc.).
     """
-
-    carat: Optional[float] = Field(description="Carat weight of the diamond")
+# If you do not mention the defualt value, the Pydantic Model will consider it as required. 
+    carat: Optional[float] = Field(default=None, description="Carat weight of the diamond")
     shape: Optional[str] = Field(default=None,description="Shape of the diamond like Round, Oval, etc.")
     clarity: Optional[str] = Field(default=None,description="Clarity grade like VVS, VS, SI, etc.")
     lab: Optional[str] = Field(default=None,description="Country of lab or lab like India, USA, etc.")
@@ -361,8 +361,20 @@ class DiamondFinder:
         """
         base_query = "SELECT * FROM diamonds WHERE "
         conditions = []
-        if data.get("carat"):
+        # Carat range
+        if data.get("carat_range") and isinstance(data["carat_range"], list) and len(data["carat_range"]) == 2:
+            min_carat, max_carat = data["carat_range"]
+            conditions.append(f"carat > {min_carat} AND carat <= {max_carat}")
+        # Carat less than
+        elif data.get("carat_lt") is not None:
+            conditions.append(f"carat < {data['carat_lt']}")
+        # Carat greater than
+        elif data.get("carat_gt") is not None:
+            conditions.append(f"carat > {data['carat_gt']}")
+        # Carat exact
+        elif data.get("carat") is not None:
             conditions.append(f"carat = {data['carat']}")
+
         if data.get("shape"):
             conditions.append(f"shape ILIKE '%{data['shape']}%'")
         if data.get("color"):
@@ -378,7 +390,7 @@ class DiamondFinder:
         if data.get("heart_and_arrow") is not None:
             conditions.append(f"heart_and_arrow = {data['heart_and_arrow']}")
         if data.get("eye_clean") is not None:
-            conditions.append(f"eye_clean = {data['eye_clean']}")
+            conditions.append(f"eye_clean = {data['eye_clean']}" )
         if data.get("culet"):
             conditions.append(f"culet ILIKE '%{data['culet']}%'")
         if data.get("cut"):
