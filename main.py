@@ -44,7 +44,6 @@ Methods:
         """
 from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
 from langchain.prompts import ChatPromptTemplate, PromptTemplate
-from langchain.memory import ConversationBufferMemory
 from langchain.chains import LLMChain
 from langchain_core.messages import HumanMessage, AIMessage
 from pydantic import BaseModel, Field
@@ -53,6 +52,7 @@ from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession 
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
+from utils.logger import logging
 import asyncio
 import json
 
@@ -100,7 +100,7 @@ class DiamondFinder:
         prompt: LangChain ChatPromptTemplate for LLM extraction prompt.
         llm: LangChain NVIDIA LLM client for both extraction and summary tasks.
     """
-    def __init__(self, db_url: str, memory: Optional[ConversationBufferMemory] = None):
+    def __init__(self, db_url: str):
         """
         Initialize DiamondFinder with async database engine and LLM setup.
 
@@ -110,9 +110,7 @@ class DiamondFinder:
         # Use async engine for PostgreSQL
         self.engine = create_async_engine(db_url, future=True)
         self.async_session = sessionmaker(self.engine, expire_on_commit=False, class_=AsyncSession)
-        self.memory = ConversationBufferMemory(memory_key="chat_history", 
-                                               input_key="input", 
-                                               return_messages=True)
+
         self.parser = PydanticOutputParser(pydantic_object=DiamondQuery)
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", "You are an assistant that extracts diamond preferences into structured fields."),
@@ -153,6 +151,7 @@ class DiamondFinder:
             try:
                 return json.loads(sql_query)
             except Exception:
+
                 raise ValueError("LLM output is not a valid dict or JSON string")
 
     def normalize_diamond_fields(self, data: dict) -> dict:
@@ -399,7 +398,9 @@ class DiamondFinder:
             conditions.append(f"polish ILIKE '%{data['polish']}%'")
         if not conditions:
             return "SELECT * FROM diamonds LIMIT 10;"
+        logging.info(f"Built SQL query: {base_query + ' AND '.join(conditions)}")
         return base_query + " AND ".join(conditions) + " LIMIT 10;"
+       
 
     async def query_diamonds(self, sql: str) -> Tuple[List[Dict[str, Any]], int]:
         """
@@ -438,7 +439,7 @@ class DiamondFinder:
     
     
 
-    async def find_diamonds(self, user_query: str, chat_history: list = None, session_id: str = None) -> Dict[str, Any]:
+    async def find_diamonds(self, user_query: str) -> Dict[str, Any]:
         """
         Orchestrate the extraction, normalization, SQL building, and DB querying for diamonds (async).
         Uses memory only for the summary/chat step.
@@ -505,29 +506,12 @@ class DiamondFinder:
             total_count=total_count
         )
 
-        # Build chat history for memory (if any)
-        messages = []
-        if chat_history:
-            for msg in chat_history:
-                if msg['role'] == 'user':
-                    messages.append(HumanMessage(content=msg['content']))
-                elif msg['role'] == 'assistant':
-                    messages.append(AIMessage(content=msg['content']))
-        messages.append(HumanMessage(content=summary_prompt))
-
-        # Run summary LLM with memory (multi-turn)
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, self.llm.invoke, messages)
-        messages.append(AIMessage(content=response.content))
-
-        # Convert messages back to serializable chat history
-        updated_history = []
-        for msg in messages:
-            if isinstance(msg, HumanMessage):
-                updated_history.append({'role': 'user', 'content': msg.content})
-            elif isinstance(msg, AIMessage):
-                updated_history.append({'role': 'assistant', 'content': msg.content})
-
+        # Run summary LLM statelessly
+        response = await asyncio.get_event_loop().run_in_executor(
+            None, self.llm.invoke, [HumanMessage(content=summary_prompt)]
+        )
+        logging.info(f"LLM summary response: {response.content}")
+        
         return {
             "diamonds": diamonds,
             "summary": response.content,
