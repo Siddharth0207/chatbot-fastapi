@@ -71,7 +71,24 @@ async def query_diamond(request: DiamondQueryRequest, fastapi_request: Request):
     try:
         result = await finder.find_diamonds(request.query)
         logging.info(f"Query successful for session {session_id}")
-        return JSONResponse(content=result, headers={"x-session-id": session_id})
+        
+        # Format the response for better API consumption
+        formatted_result = {
+            "session_id": session_id,
+            "user_query": request.query,
+            "summary": result.get("summary", ""),
+            "total_count": result.get("total_count", 0),
+            "sql_query": result.get("sql_query", ""),
+            "diamonds": result.get("diamonds", []),
+            "status": "success"
+        }
+        
+        logging.info(f"Formatted result: {formatted_result}")
+        return JSONResponse(content=formatted_result, headers={"x-session-id": session_id})
     except Exception as e:
         logging.error(f"Error in /query endpoint for session {session_id}: {e}", exc_info=True)
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return JSONResponse(content={
+            "error": str(e), 
+            "status": "error",
+            "session_id": session_id
+        }, status_code=500)
