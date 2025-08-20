@@ -55,6 +55,8 @@ from sqlalchemy.orm import sessionmaker
 from utils.logger import logging
 import asyncio
 import json
+import os
+from dotenv import load_dotenv
 
 
 class DiamondQuery(BaseModel):
@@ -108,6 +110,7 @@ class DiamondFinder:
             db_url (str): Database connection string (should use asyncpg driver for async).
         """
         # Use async engine for PostgreSQL
+        load_dotenv()  # Load environment variables from .env file
         self.engine = create_async_engine(db_url, future=True)
         self.async_session = sessionmaker(self.engine, expire_on_commit=False, class_=AsyncSession)
 
@@ -122,6 +125,7 @@ class DiamondFinder:
             temperature=0.6,
             top_p=0.7,
             max_tokens=4096,
+            api_key=os.getenv("NVIDIA_API_KEY")
         )
         # Chain with memory
         self.chain = LLMChain(
