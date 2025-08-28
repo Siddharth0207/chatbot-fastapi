@@ -197,7 +197,9 @@
             const status = statusMessages[Math.floor(Math.random() * statusMessages.length)];
             appendMessage(status, 'bot');
             try {
-                const response = await fetch('http://192.167.1.18:8000/query', {
+                const host = window.location.hostname || '127.0.0.1';
+                const backendUrl = `http://${host}:8000/query`;
+                const response = await fetch(backendUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query })

@@ -1,88 +1,99 @@
-# Diamond Search Chatbot
+# LangChain Diamonds — Developer Quickstart
 
-A modern FastAPI-based chatbot for searching diamonds using natural language queries. The system leverages an LLM (NVIDIA/Meta) for robust preference extraction, normalizes user input, queries a PostgreSQL database asynchronously, and returns both a summary and a list of matching diamonds. The frontend features a modern, responsive chat UI with a typing effect and multi-turn conversation support.
+Minimal developer-focused README with the common commands you need to run locally.
+Checklist
 
-## Features
+- Activate the included venv and install deps
+- Set runtime env vars (example `.env` or session vars)
+- Run the backend (dev/local and LAN variants shown)
+- Serve the static frontend locally
+- Quick tests and basic troubleshooting commands
 
-- **Natural Language Search:** Users can search for diamonds using plain English queries.
-- **LLM-Powered Extraction:** Uses an LLM to extract and normalize diamond preferences from user input.
-- **Async PostgreSQL Queries:** Fast, concurrent database access using SQLAlchemy async and asyncpg.
-- **Multi-Turn Chat & Session Support:** Maintains chat history per user session.
-- **Modern Frontend:** Responsive chat UI with typing/streaming effect and professional design.
-- **Total Count Reporting:** Returns both the top results and the total number of matches.
-- **Logging:** All events and errors are logged to `logs/diamond_app.log`.
-- **Concurrency Tested:** Includes tests for concurrent and load scenarios.
+1. Activate the repository virtualenv (PowerShell)
 
-## Project Structure
-
-```
-├── app.py                # FastAPI backend with endpoints
-├── main.py               # DiamondFinder logic, LLM, normalization, SQL
-├── db.py                 # (Optional) DB utilities
-├── home.html             # Frontend chat UI
-├── requirements.txt      # Python dependencies
-├── logger.py             # Logging setup (file + console)
-├── test_app.py           # Basic endpoint tests
-├── test_concurrency.py   # Concurrency/load test
-├── logs/
-│   └── diamond_app.log   # Log file (auto-created)
-└── ...
+```powershell
+# from repo root
+& .\lang\Scripts\Activate.ps1
+python --version
 ```
 
-## Setup & Run
+1. Install requirements
 
-### 1. Install Python dependencies
-
-```bash
-pip install -r requirements.txt
+```powershell
+pip install -r .\requirements.txt
 ```
 
-### 2. Set up PostgreSQL
+1. Environment variables (session-only example)
 
-- Ensure PostgreSQL is running and accessible.
-- Update the DB URL in `app.py` and `main.py` if needed (default: `postgresql+asyncpg://postgres:0207@localhost:5432/postgres`).
-- Import your diamonds data into a table named `diamonds`.
-
-### 3. Run the FastAPI backend
-
-```bash
-uvicorn app:app --reload
+```powershell
+#$env:DATABASE_URL must use asyncpg if using async SQLAlchemy
+$env:DATABASE_URL = 'postgresql+asyncpg://postgres:password@localhost:5432/postgres'
+$env:NVIDIA_API_KEY = 'sk-...'
 ```
 
-### 4. Open the Frontend
+Alternatively create a `.env` in the project root with those keys.
 
-- Open `home.html` in your browser (or serve it via a static server).
-- The frontend will connect to the backend at `http://localhost:8000` (update if needed).
+1. Run the backend (development - local only)
 
-## Testing
+```powershell
+uvicorn app:app --host 127.0.0.1 --port 8000 --reload
+```
 
-- Run basic API tests:
+1. Run the backend (listen on LAN / other devices)
 
-  ```
-    bash
-  pytest test_app.py
-  ```
+```powershell
+# Make sure Windows Firewall allows the port if you do this
+uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+# For production (no reload) and multiple workers:
+uvicorn app:app --host 0.0.0.0 --port 8000 --workers 4
+```
 
-- Run concurrency/load test (and see output in `concurrency_test_output.json`):
-  ```
-    bash
-  python test_concurrency.py
-  ```
+1. Serve the static frontend directory with Python (bind to localhost)
 
-## Logging
+```powershell
+# from the folder that contains home_cb.html
+python -m http.server 5500 --bind 127.0.0.1
+# then open http://127.0.0.1:5500/home_cb.html
+```
 
-- All logs (info, errors) are saved to `logs/diamond_app.log` and printed to the console.
+1. Quick test requests (PowerShell)
 
-## Customization
+```powershell
+# simple GET
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/' -Method Get
 
-- **LLM Model:** Change the model in `main.py` if you want to use a different LLM.
-- **Frontend:** Edit `home.html` for UI/UX changes.
-- **Normalization:** Update mappings in `main.py` for new diamond properties or value variations.
+# POST /query example
+$body = @{ query = 'Find a 1 carat VVS1 diamond' } | ConvertTo-Json
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/query' -Method Post -ContentType 'application/json' -Body $body
+```
 
-## License
+1. Check if port 8000 is listening
 
-Apache License 2.0
+```powershell
+Get-NetTCPConnection -LocalPort 8000
+# or
+netstat -ano | findstr :8000
+```
 
----
+1. Windows Firewall rule (admin) — only when binding to 0.0.0.0 and you need inbound access
 
-**Contact:** For questions or support, open an issue or contact the maintainer.
+```powershell
+New-NetFirewallRule -DisplayName "Allow Uvicorn 8000" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
+```
+
+Troubleshooting tips (short)
+
+- If the browser shows ERR_CONNECTION_REFUSED to 192.x.x.x, confirm the machine IP with `ipconfig` and whether Uvicorn is listening on that interface. Common local IPs are `192.168.x.x` (not `192.167.x.x`) — check for typos.
+- For local development, serving the frontend on `127.0.0.1` and running Uvicorn on `127.0.0.1` avoids firewall/network issues.
+- The frontend uses `window.location.hostname` to build the backend URL; ensure both frontend and backend are bound to the same interface.
+
+Where things live
+
+- Backend: `app.py` (FastAPI endpoints)
+- Core logic: `main.py` (DiamondFinder, extraction, SQL builder)
+- Config: `utils/config.py` (reads `.env` via Pydantic settings)
+- Prompts: `utils/prompts.py`
+- Mappings: `utils/mappings.py`
+- Frontend: `home_cb.html`
+
+If you want, I can add a small PowerShell helper script to start both the backend and a static server concurrently.
