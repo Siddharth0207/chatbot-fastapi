@@ -44,6 +44,9 @@ Methods:
         """
 from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
 from langchain.prompts import ChatPromptTemplate, PromptTemplate
+from utils.prompts import extraction_prompt, SUMMARY_PROMPT
+from utils.mappings import MAPPINGS
+from utils.config import get_settings
 from langchain.chains import LLMChain
 from langchain_core.messages import HumanMessage, AIMessage
 from pydantic import BaseModel, Field
@@ -102,31 +105,36 @@ class DiamondFinder:
         prompt: LangChain ChatPromptTemplate for LLM extraction prompt.
         llm: LangChain NVIDIA LLM client for both extraction and summary tasks.
     """
-    def __init__(self, db_url: str):
+    def __init__(self, db_url: str | None = None):
         """
         Initialize DiamondFinder with async database engine and LLM setup.
 
         Args:
-            db_url (str): Database connection string (should use asyncpg driver for async).
+            db_url (Optional[str]): Database connection string (should use asyncpg driver for async).
+                                    If not provided, will use value from `config.get_settings()`.
         """
+        settings = get_settings()
+        if db_url is None:
+            db_url = settings.DATABASE_URL
+
         # Use async engine for PostgreSQL
-        load_dotenv()  # Load environment variables from .env file
         self.engine = create_async_engine(db_url, future=True)
         self.async_session = sessionmaker(self.engine, expire_on_commit=False, class_=AsyncSession)
 
+        # Parser and prompts
         self.parser = PydanticOutputParser(pydantic_object=DiamondQuery)
-        self.prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an assistant that extracts diamond preferences into structured fields."),
-            ("human", "Extract the diamond query fields from: {input}\n\n{format_instructions}")
-        ])
+        self.prompt = extraction_prompt
+
+        # LLM client (uses centralized settings for API key)
         self.llm = ChatNVIDIA(
             model="meta/llama-3.1-70b-instruct",
             task="chat",
             temperature=0.6,
             top_p=0.7,
             max_tokens=4096,
-            api_key=os.getenv("NVIDIA_API_KEY")
+            api_key=settings.NVIDIA_API_KEY
         )
+
         # Chain with memory
         self.chain = LLMChain(
             llm=self.llm,
@@ -168,185 +176,8 @@ class DiamondFinder:
         Returns:
             dict: Dictionary with normalized field values suitable for SQL/database queries.
         """
-        mappings = {
-            "symmetry": {
-                # EX
-                "Excellent": "EX", "X": "EX", "EXCELLENT": "EX", "Ex": "EX", "EXC": "EX", "EXCL": "EX",
-                # VG
-                "Very Good": "VG", "V": "VG", "V.Good": "VG", "VG": "VG", "VG-": "VG", "VGOOD": "VG",
-                # G
-                "Good": "G", "GD": "G", "G": "G",
-                # F
-                "Fair": "F", "F": "F", "FR": "F",
-                # P
-                "Poor": "P", "P": "P", "PR": "P",
-                # U
-                "U": "U", "u": "U", "Unknown": "U", "UNKNOWN": "U"
-            },
-            "cut": {
-                # EX
-                "Excellent": "EX", "X": "EX", "EXCELLENT": "EX", "Ex": "EX", "EXC": "EX", "EX+": "EX", "EX-": "EX", "EXCL": "EX", "EX": "EX", "BL": "EX", "bl": "EX", "Black Label": "EX",
-                # VG
-                "Very Good": "VG", "V": "VG", "V.Good": "VG", "VG": "VG", "VG-": "VG", "VGOOD": "VG",
-                # G
-                "Good": "G", "GD": "G", "G": "G", "GD+": "G",
-                # F
-                "Fair": "F", "F": "F", "FR": "F",
-                # P
-                "Poor": "P", "P": "P", "PR": "P",
-                # U
-                "U": "U", "u": "U", "Unknown": "U", "UNKNOWN": "U",
-                # NA
-                "Not Applicable": "NA", "NOT APPLICABLE": "NA", "NA": "NA"
-            },
-            "polish": {
-                # EX
-                "Excellent": "EX", "X": "EX", "EXCELLENT": "EX", "Ex": "EX", "EXC": "EX", "EXCL": "EX",
-                # VG
-                "Very Good": "VG", "V": "VG", "V.Good": "VG", "VG": "VG", "VG-": "VG", "VGOOD": "VG",
-                # G
-                "Good": "G", "GD": "G", "G": "G",
-                # F
-                "Fair": "F", "F": "F", "FR": "F",
-                # P
-                "Poor": "P", "P": "P", "PR": "P",
-                # U
-                "U": "U", "u": "U", "Unknown": "U", "UNKNOWN": "U"
-            },
-            "fluorescence": {
-                # None
-                "NON": "None", "None": "None", "No": "None", "FL0": "None", "N": "None", "NEG": "None", "Negligible": "None",
-                # Faint
-                "Faint": "Faint", "FNT": "Faint", "FA": "Faint", "FL1": "Faint", "F": "Faint",
-                # Medium
-                "Medium": "Medium", "MED": "Medium", "FL2": "Medium", "M": "Medium",
-                # Strong
-                "Strong": "Strong", "STG": "Strong", "ST": "Strong", "FL3": "Strong", "S": "Strong", "STR": "Strong",
-                # Very Strong
-                "Very Strong": "Very Strong", "VST": "Very Strong", "FL4": "Very Strong", "VSTG": "Very Strong", "VSTR": "Very Strong", "VSTRONG": "Very Strong"
-            },
-            "clarity": {
-                # FL
-                "FL": "FL",
-                # IF
-                "IF": "IF",
-                # VVS1
-                "VVS1": "VVS1", "VVS 1": "VVS1",
-                # VVS2
-                "VVS2": "VVS2", "VVS 2": "VVS2",
-                # VS1
-                "VS1": "VS1", "VS 1": "VS1", "VS1+": "VS1",
-                # VS2
-                "VS2": "VS2", "VS 2": "VS2", "VS2+": "VS2",
-                # SI1
-                "SI1": "SI1", "SI 1": "SI1", "SI1+": "SI1",
-                # SI2
-                "SI2": "SI2", "SI 2": "SI2",
-                # SI3
-                "SI3": "SI3", "SI 3": "SI3",
-                # I1
-                "I1": "I1", "I 1": "I1",
-                # I2
-                "I2": "I2", "I 2": "I2",
-                # I3
-                "I3": "I3", "i3": "I3", "I 3": "I3",
-                # U (Unknown)
-                "U": "U", "Unknown": "U", "UNKNOWN": "U", "u": "U"
-            },
-            "culet": {
-                "None": "None", "Very Small": "VS", "Small": "S", "Slightly Large": " SL",
-                "Medium": "M", "Large": "L", "Extra Large": "EL", "Very Large": "VL"
-            },
-            "color": {
-                # D
-                "D": "D", "d": "D", "D+": "D",
-                # E
-                "E": "E", "e": "E", "E+": "E",
-                # F
-                "F": "F", "f": "F", "F+": "F",
-                # G
-                "G": "G", "g": "G", "G+": "G",
-                # H
-                "H": "H", "H+": "H",
-                # I
-                "I": "I", "i": "I", "I+": "I",
-                # J
-                "J": "J", "j": "J", "J+": "J",
-                # K
-                "K": "K", "k": "K", "K+": "K",
-                # L
-                "L": "L", "l": "L", "L+": "L",
-                # M
-                "M": "M", "m": "M", "M+": "M",
-                # N
-                "N": "N", "n": "N", "N+": "N",
-                # OP
-                "O-P": "OP", "o-p": "OP", "O": "OP", "p": "OP", "OP": "OP", "op": "OP",
-                # QR
-                "Q-R": "QR", "q-r": "QR", "q": "QR", "r": "QR", "QR": "QR", "qr": "QR",
-                # ST
-                "S-T": "ST", "s-t": "ST", "s": "ST", "t": "ST", "ST": "ST", "st": "ST",
-                # UV
-                "U-V": "UV", "u-v": "UV", "u": "UV", "v": "UV", "UV": "UV", "uv": "UV",
-                # WX
-                "W-X": "WX", "w-x": "WX", "w": "WX", "x": "WX", "WX": "WX", "wx": "WX",
-                # YZ
-                "Y-Z": "YZ", "y-z": "YZ", "y": "YZ", "z": "YZ", "YZ": "YZ", "yz": "YZ"
-            },
-            "eye clean": {
-                "YES": "YES", "NO": "NO"
-            },
-            "heart and arrow": {
-                "YES": "YES", "NO": "NO"
-            },
-            "lab": {
-                # IOD
-                "IOD": "IOD", "iod": "IOD",
-                # GIA
-                "GIA": "GIA",
-                # Other
-                "Other": "Other",
-                # None
-                "NONE": "None", "none": "None",
-                # HRD, IGI, IOD India (from previous mapping)
-                "HRD": "HRD", "IGI": "IGI", "IOD India": "IOD India"
-            },
-            "shape": {
-                # Round
-                "BR": "Round", "ROUND": "Round", "RBC": "Round", "Round": "Round", "Round Brilliant": "Round", "round": "Round", "rbc": "Round", "rd": "Round", "RD": "Round", "RO": "Round", "ROUND BRILLIANT": "Round",
-                # Oval
-                "O": "Oval", "OV": "Oval", "OMB": "Oval", "OB": "Oval", "OVAL": "Oval", "Oval": "Oval", "omb": "Oval", "Omb": "Oval", "o": "Oval", "ov": "Oval", "OVL": "Oval", "Oval Brilliant": "Oval",
-                # Pear
-                "P": "Pear", "PS": "Pear", "PSH": "Pear", "PB": "Pear", "PMB": "Pear", "PEAR": "Pear", "Pear": "Pear", "pb": "Pear", "ps": "Pear", "p": "Pear", "psh": "Pear", "pmb": "Pear", "PR": "Pear",
-                # Emerald
-                "E": "Emerald", "EM": "Emerald", "EC": "Emerald", "SX": "Emerald", "Emerald": "Emerald", "EMERALD": "Emerald", "em": "Emerald", "Em": "Emerald", "ec": "Emerald",
-                # Heart
-                "H": "Heart", "HS": "Heart", "HT": "Heart", "MHRC": "Heart", "HB": "Heart", "HEART": "Heart", "Heart": "Heart", "hb": "Heart", "ht": "Heart", "hs": "Heart", "h": "Heart",
-                # Marquise
-                "MQB": "Marquise", "M": "Marquise", "MQ": "Marquise", "MB": "Marquise", "MARQUISE": "Marquise", "Marquise": "Marquise", "mqb": "Marquise", "mq": "Marquise", "m": "Marquise",
-                # Cushion
-                "CB": "Cushion", "Cushion Brilliant": "Cushion", "C": "Cushion", "CUX": "Cushion", "CU": "Cushion", "CMB": "Cushion", "CUSH": "Cushion", "CUS": "Cushion", "RCRMB": "Cushion", "CRC": "Cushion", "CSC": "Cushion", "CX": "Cushion", "RCSB": "Cushion", "SCMB": "Cushion", "SCX": "Cushion", "Cushion": "Cushion", "cushion": "Cushion", "Cushion Modified Brilliant": "Cushion", "CUMBR": "Cushion", "CUSHION MODIFIED": "Cushion", "LR_BRILLIANT": "Cushion", "CS": "Cushion", "CM": "Cushion", "CUSHION": "Cushion",
-                # Radiant
-                "R": "Radiant", "RAD": "Radiant", "RA": "Radiant", "RC": "Radiant", "RDN": "Radiant", "CRB": "Radiant", "RCRB": "Radiant", "Sq Radiant": "Radiant", "SQR": "Radiant", "CCSMB": "Radiant", "RADIANT": "Radiant", "Radiant": "Radiant", "Square Radiant": "Radiant", "LONG RADIANT": "Radiant", "RN": "Radiant",
-                # Princess
-                "PRN": "Princess", "PR": "Princess", "PRIN": "Princess", "PN": "Princess", "MDSQB": "Princess", "SMB": "Princess", "PRINCESS": "Princess", "Princess": "Princess", "smb": "Princess", "PC": "Princess",
-                # Square Emerald
-                "A": "Square Emerald", "CSS": "Square Emerald", "CSSC": "Square Emerald", "AC": "Square Emerald", "SE": "Square Emerald", "Asscher": "Square Emerald", "ASSCHER": "Square Emerald", "SQUARE EMERALD": "Square Emerald", "Square Emerald": "Square Emerald", "Square emerald": "Square Emerald", "SQ Emerald": "Square Emerald", "sq emerald": "Square Emerald", "Asscher Cut": "Square Emerald", "SQEM": "Square Emerald", "SQE": "Square Emerald", "ASSCHER CUT": "Square Emerald", "Square Emerald Cut": "Square Emerald", "SQUARE EMERALD CUT": "Square Emerald",
-                # Baguette
-                "Baguette": "Baguette", "BAG": "Baguette", "BG": "Baguette", "BAGUETTE": "Baguette", "Bag": "Baguette", "TAPERED BAGUETTE": "Baguette", "BAGETTE": "Baguette",
-                # Taper
-                "Taper": "Taper", "TAPER": "Taper", "taper": "Taper",
-                # Rose
-                "rose": "Rose", "RS": "Rose", "RRC": "Rose", "Rose": "Rose", "ROSE": "Rose", "ROSE-CUT": "Rose",
-                # Shield
-                "Shield": "Shield", "SHD": "Shield", "SHIELD": "Shield",
-                # Trilliant
-                "TR": "Trilliant", "TRI": "Trilliant", "Trill": "Trilliant", "Trilliant": "Trilliant", "TRILLIANT": "Trilliant",
-                # Other
-                "X": "Other", "BAT": "Other", "Starlet": "Other", "STARLET": "Other"
-            }}
         normalized = data.copy()
-        for field, mapping in mappings.items():
+        for field, mapping in MAPPINGS.items():
             if field in data and data[field]:
                 val = str(data[field]).strip()
                 normalized[field] = mapping.get(val, val)
@@ -474,37 +305,8 @@ class DiamondFinder:
         
 
 
-        # Prepare summary prompt
-        prompt_2 = PromptTemplate(
-            input_variables=["diamonds", "user_query", "total_count"],
-            template="""
-            You are an expert gemologist and diamond consultant.
-
-            The user asked: "{user_query}"
-
-            You have retrieved the following diamonds from the database:
-
-            {diamonds}
-
-            Now do the following:
-
-            1. Begin with this line exactly:
-            We found total {total_count} stones based on your query.
-
-            2. Then say:
-            Here we are displaying top 10 stones:
-
-            3. Print each diamond on a **new line**, following this format:
-            . Shape: <Shape>, Color: <Color>, Cut: <Cut>, Clarity: <Clarity>, Polish: <Polish>, Weight: <Carat>, Price/Carat: <$Price>
-
-            4. Ensure that each diamond is printed on a separate line with a line break (`\n`).
-
-            5. After listing the diamonds, provide a **2-3 sentence summary** of what makes this selection valuable and how it fits the user’s preferences.
-
-            Make sure the response preserves the line breaks exactly as instructed, so it renders properly in a web frontend.
-            """
-        )
-        summary_prompt = prompt_2.format(
+        # Prepare summary prompt using centralized prompt template
+        summary_prompt = SUMMARY_PROMPT.format(
             diamonds=format_diamond_list(diamonds),
             user_query=user_query,
             total_count=total_count

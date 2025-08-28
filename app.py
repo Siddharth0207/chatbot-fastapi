@@ -24,7 +24,7 @@ from langchain.agents import AgentExecutor, Tool, create_react_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.memory import ConversationBufferMemory
 from langchain_core.output_parsers import StrOutputParser
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any    
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi import Request
@@ -33,10 +33,7 @@ from fastapi import Request
 
 
 from main import DiamondFinder
-
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, Session
-from langchain_community.utilities import SQLDatabase
+from utils.config import get_settings
 from utils.logger import logging
 
 
@@ -67,7 +64,8 @@ async def read_root():
 async def query_diamond(request: DiamondQueryRequest, fastapi_request: Request):
     session_id = fastapi_request.headers.get("x-session-id", "default_session")
     logging.info(f"/query endpoint called. Session: {session_id}, Query: {request.query}")
-    finder = DiamondFinder("postgresql+asyncpg://postgres:0207@localhost:5432/postgres")
+    settings = get_settings()
+    finder = DiamondFinder(settings.DATABASE_URL)
     try:
         result = await finder.find_diamonds(request.query)
         logging.info(f"Query successful for session {session_id}")
