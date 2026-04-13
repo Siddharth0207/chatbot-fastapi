@@ -87,6 +87,18 @@ Troubleshooting tips (short)
 - For local development, serving the frontend on `127.0.0.1` and running Uvicorn on `127.0.0.1` avoids firewall/network issues.
 - The frontend uses `window.location.hostname` to build the backend URL; ensure both frontend and backend are bound to the same interface.
 
+CORS setup that works across dev devices
+
+- Do not use `allow_origins=["*"]` with `allow_credentials=True` (browsers reject this).
+- Keep CORS in `.env` so every developer gets the same behavior.
+- Start backend with:
+
+```powershell
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
+```
+
+- If frontend runs on a LAN URL (for mobile/other devices), add that exact origin (including port) to `CORS_ALLOW_ORIGINS`.
+
 Where things live
 
 - Backend: `app.py` (FastAPI endpoints)

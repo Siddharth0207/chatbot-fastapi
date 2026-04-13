@@ -2,7 +2,7 @@ import pandas as pd
 from sqlalchemy import create_engine
 
 # Load Excel
-df = pd.read_excel(r"C:\Users\DNK109\Documents\langchain_diamonds\Diamond_Records_1000.xlsx")
+df = pd.read_excel(r"C:\Users\siddh\OneDrive\文档\cb\chatbot-fastapi\Diamond_Records_1000.xlsx")
 
 # Optional: Rename or clean columns if needed
 df.columns = [col.strip().lower().replace(" ", "_") for col in df.columns]
