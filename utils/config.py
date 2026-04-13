@@ -12,6 +12,16 @@ class Settings(BaseSettings):
     NVIDIA_API_KEY: str | None = None
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+    CORS_ALLOW_ORIGINS: str = (
+        "http://localhost:3000,http://127.0.0.1:3000,"
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:5500,http://127.0.0.1:5500"
+    )
+    # Matches local frontend origins on any port across developer machines.
+    CORS_ALLOW_ORIGIN_REGEX: str = r"^https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?$"
+    CORS_ALLOW_METHODS: str = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    CORS_ALLOW_HEADERS: str = "*"
+    CORS_ALLOW_CREDENTIALS: bool = True
 
     class Config:
         env_file = ".env"

@@ -37,6 +37,10 @@ from utils.config import get_settings
 from utils.logger import logging
 
 
+def _parse_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def get_memory(session_id: str)-> ConversationBufferMemory:
     return ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
@@ -47,12 +51,18 @@ class DiamondQueryRequest(BaseModel):
 
 
 app = FastAPI()
+settings = get_settings()
+cors_origins = _parse_csv(settings.CORS_ALLOW_ORIGINS)
+cors_methods = _parse_csv(settings.CORS_ALLOW_METHODS)
+cors_headers = _parse_csv(settings.CORS_ALLOW_HEADERS)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Or specify ["http://localhost:8000"] for more security
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins,
+    allow_origin_regex=settings.CORS_ALLOW_ORIGIN_REGEX,
+    allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
+    allow_methods=cors_methods,
+    allow_headers=cors_headers,
 )
 
 @app.get("/")
