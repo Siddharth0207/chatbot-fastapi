@@ -1,54 +1,27 @@
 """
 This module defines a FastAPI application for querying diamond data using a natural language interface.
 It integrates LangChain for conversational memory and NVIDIA AI endpoints for processing queries.
-Classes:
-    DiamondQueryRequest (BaseModel): 
-        A Pydantic model representing the structure of the request body for diamond queries.
-Functions:
-    get_memory(session_id: str) -> ConversationBufferMemory:
-        Creates and returns a conversation buffer memory object for maintaining chat history.
-    read_root() -> dict:
-        A FastAPI route that returns a welcome message for the API.
-    query_diamond(request: DiamondQueryRequest, fastapi_request: Request) -> JSONResponse:
-        A FastAPI route that processes diamond queries using the DiamondFinder class and returns the results.
-FastAPI Application:
-    app: 
-        The main FastAPI application instance with CORS middleware configured for cross-origin requests.
 """
-from fastapi import FastAPI, Depends
-from pydantic import BaseModel , Field
-import pandas as pd
-import ast
-from langchain_nvidia_ai_endpoints import ChatNVIDIA
-from langchain.agents import AgentExecutor, Tool, create_react_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.memory import ConversationBufferMemory
-from langchain_core.output_parsers import StrOutputParser
-from typing import Optional, List, Dict, Any    
+from fastapi import FastAPI, Depends, Request
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi import Request
+import uuid
 
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.memory import ConversationBufferMemory
 
-
-
-from main import DiamondFinder
+from main import search_diamonds_db
 from utils.config import get_settings
 from utils.logger import logging
-
+from utils.prompts import agent_prompt
 
 def _parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
-
-def get_memory(session_id: str)-> ConversationBufferMemory:
-    return ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-
-
 class DiamondQueryRequest(BaseModel):
     query: str
-
-
 
 app = FastAPI()
 settings = get_settings()
@@ -65,33 +38,61 @@ app.add_middleware(
     allow_headers=cors_headers,
 )
 
+# In-memory store for session memories
+session_memories = {}
+
+def get_memory(session_id: str) -> ConversationBufferMemory:
+    if session_id not in session_memories:
+        session_memories[session_id] = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+    return session_memories[session_id]
+
+# Initialize LLM and Agent once
+llm = ChatNVIDIA(
+    model="google/gemma-4-31b-it",
+    task="chat",
+    temperature=1,
+    top_p=0.95,
+    max_tokens=16384,
+    stream = True,
+    api_key=settings.NVIDIA_API_KEY
+)
+
+tools = [search_diamonds_db]
+agent = create_tool_calling_agent(llm, tools, agent_prompt)
+
+
 @app.get("/")
 async def read_root():
     logging.info("Root endpoint accessed.")
     return {"message": "Welcome to the Diamond Query API"}
 
+
 @app.post("/query")
 async def query_diamond(request: DiamondQueryRequest, fastapi_request: Request):
-    session_id = fastapi_request.headers.get("x-session-id", "default_session")
+    session_id = fastapi_request.headers.get("x-session-id")
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        
     logging.info(f"/query endpoint called. Session: {session_id}, Query: {request.query}")
-    settings = get_settings()
-    finder = DiamondFinder(settings.DATABASE_URL)
+    
+    memory = get_memory(session_id)
+    agent_executor = AgentExecutor(agent=agent, tools=tools, memory=memory, verbose=True)
+    
     try:
-        result = await finder.find_diamonds(request.query)
+        # The agent invokes the tool internally if needed, and formulates a response text
+        result = await agent_executor.ainvoke({"input": request.query})
+        summary = result.get("output", "")
+        
         logging.info(f"Query successful for session {session_id}")
         
-        # Format the response for better API consumption
+        # Format the response for API consumption
         formatted_result = {
             "session_id": session_id,
             "user_query": request.query,
-            "summary": result.get("summary", ""),
-            "total_count": result.get("total_count", 0),
-            "sql_query": result.get("sql_query", ""),
-            "diamonds": result.get("diamonds", []),
+            "summary": summary,
             "status": "success"
         }
         
-        logging.info(f"Formatted result: {formatted_result}")
         return JSONResponse(content=formatted_result, headers={"x-session-id": session_id})
     except Exception as e:
         logging.error(f"Error in /query endpoint for session {session_id}: {e}", exc_info=True)
