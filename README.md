@@ -29,6 +29,10 @@ pip install -r .\requirements.txt
 #$env:DATABASE_URL must use asyncpg if using async SQLAlchemy
 $env:DATABASE_URL = 'postgresql+asyncpg://postgres:password@localhost:5432/postgres'
 $env:NVIDIA_API_KEY = 'sk-...'
+$env:AGENT_TIMEOUT_SECONDS = '45'
+$env:CHAT_TIMEOUT_SECONDS = '25'
+$env:NVIDIA_TOOL_MAX_TOKENS = '1200'
+$env:NVIDIA_CHAT_MAX_TOKENS = '512'
 ```
 
 Alternatively create a `.env` in the project root with those keys.

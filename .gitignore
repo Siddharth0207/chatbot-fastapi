@@ -7,7 +7,7 @@ __pycache__
 .vscode
 node_modules/
 logs/
-
+.vexp
 # C extensions
 *.so
 

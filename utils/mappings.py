@@ -1,3 +1,11 @@
+"""Diamond attribute mappings for normalization and query standardization.
+
+Provides normalized mappings for diamond attributes to standardize user inputs
+and database queries. Maps various formats of user input to consistent database values.
+Each mapping dictionary normalizes different variations of the same value to a single
+canonical representation.
+"""
+
 MAPPINGS = {
     "symmetry": {
         "Excellent": "EX", "X": "EX", "EXCELLENT": "EX", "Ex": "EX", "EXC": "EX", "EXCL": "EX",
