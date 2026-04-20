@@ -1,3 +1,9 @@
+"""Prompt templates for the diamond consultant agent.
+
+Defines the system prompt and chat structure for the LangChain agent that
+interacts with users as a gemologist and diamond consultant.
+"""
+
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 AGENT_SYSTEM_PROMPT = """\
